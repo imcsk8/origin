@@ -1,7 +1,6 @@
 # OpenShift Images for Developers
 
-There are situations in which you only need to recreate 
-only some images instead of all the images.
+There are situations in which you only need to recreate some images instead of all the images.
 
 
 ## Build Origin
@@ -20,22 +19,29 @@ cd origin
 export OS_ONLY_BUILD_PLATFORMS="linux/amd64"
 ```
 
-### Build Openshift origin and router images
+### Build Openshift origin
 
 ```
 OS_RELEASE=n hack/build-go.sh
 
 cp _output/local/bin/linux/amd64/openshift images/origin/bin/
-
-docker build -t openshift/origin images/origin
-
-docker build -t openshift/origin-haproxy-router images/router/haproxy/
 ```
 
-## Optional: Use local registry
+## Start local registry
 
 ```
 docker run -d -p 5000:5000 --restart=always --name registry registry:2
+```
+
+
+### Build an image
+
+#### Example: Build router image
+
+```
+docker build -t openshift/origin images/origin
+
+docker build -t openshift/origin-haproxy-router images/router/haproxy/
 ```
 
 ### In /etc/sysconfig/docker modify:
@@ -44,7 +50,7 @@ docker run -d -p 5000:5000 --restart=always --name registry registry:2
 INSECURE_REGISTRY='--insecure-registry <hosts IP>:5000'
 ```
 
-or
+*or*
 
 ```
 echo "INSECURE_REGISTRY='--insecure-registry <host IP>:5000'"  >> /etc/sysconfig/docker
