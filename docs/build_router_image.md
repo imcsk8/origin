@@ -7,15 +7,19 @@ only some images instead of all the images.
 ## Build Origin
 
 ### Clone the origin repo (or your own fork)
+
 `
 git clone https://github.com/openshift/origin.git
 
 cd origin
 `
+
 **In order to speed up the build time we just build for one platform:**
+
 `
 export OS_ONLY_BUILD_PLATFORMS="linux/amd64"
 `
+
 ### Build Openshift origin and router images
 
 `
@@ -35,10 +39,13 @@ docker run -d -p 5000:5000 --restart=always --name registry registry:2
 `
 
 ### In /etc/sysconfig/docker modify:
+
 `
 INSECURE_REGISTRY='--insecure-registry <hosts IP>:5000'
 `
+
 or
+
 `
 echo "INSECURE_REGISTRY='--insecure-registry <host IP>:5000'"  >> /etc/sysconfig/docker
 `
