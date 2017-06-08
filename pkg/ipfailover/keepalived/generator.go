@@ -28,6 +28,7 @@ func generateEnvEntries(name string, options *ipfailover.IPFailoverConfigCmdOpti
 
 		"OPENSHIFT_HA_CONFIG_NAME":       name,
 		"OPENSHIFT_HA_VIRTUAL_IPS":       options.VirtualIPs,
+		"OPENSHIFT_HA_VIP_GROUP_ELEMENTS":       options.VirtualIPGroupElements,
 		"OPENSHIFT_HA_NETWORK_INTERFACE": options.NetworkInterface,
 		"OPENSHIFT_HA_MONITOR_PORT":      watchPort,
 		"OPENSHIFT_HA_VRRP_ID_OFFSET":    VRRPIDOffset,

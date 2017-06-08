@@ -225,6 +225,7 @@ vrrp_instance ${instance_name} {
 #
 function generate_failover_config() {
   local vips ; vips=$(expand_ip_ranges "${HA_VIPS}")
+  local vips_group; vips_group="${HA_VIPS_GRP_ELEMS}"
   local interface ; interface=$(get_network_device "${NETWORK_INTERFACE}")
   local ipaddr ; ipaddr=$(get_device_ip_address "${interface}")
   local port="${HA_MONITOR_PORT//[^0-9]/}"
@@ -250,12 +251,13 @@ $(generate_script_config "${ipaddr}" "${port}")
 
   local counter=1
   local previous="none"
-
+  local i=1
   for vip in ${vips}; do
     local offset=$((RANDOM % 32))
     local priority=$((ipslot % 64 + offset))
     local instancetype="slave"
     local n=$((counter % idx))
+    local vip_group[i]=$vip
 
     if [[ ${n} -eq 0 ]]; then
       instancetype="master"
@@ -269,8 +271,11 @@ $(generate_script_config "${ipaddr}" "${port}")
       fi
     fi
 
-    generate_vrrpd_instance_config "${HA_CONFIG_NAME}" "${counter}" "${vip}"  \
-        "${interface}" "${priority}" "${instancetype}"
+    if [[ ${i} -gt ${vips_group} ]]; then
+       generate_vrrpd_instance_config "${HA_CONFIG_NAME}" "${counter}" "${vip_group}"  \
+           "${interface}" "${priority}" "${instancetype}"
+       i=1
+    fi
 
     counter=$((counter + 1))
   done
