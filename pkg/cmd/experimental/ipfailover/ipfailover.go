@@ -99,7 +99,7 @@ func NewCmdIPFailoverConfig(f *clientcmd.Factory, parentName, name string, out, 
 
 	cmd.Flags().StringVar(&options.VirtualIPs, "virtual-ips", "", "A set of virtual IP ranges and/or addresses that the routers bind and serve on and provide IP failover capability for.")
 
-	cmd.Flags().StringVar(&options.VirtualIPGroupElements, "virtual-ip-group-elements", "", "Amount of IP addresses to group for each VRRP instance.")
+	cmd.Flags().StringVar(&options.VIPGroupElements, "virtual-ip-group-elements", "", "Amount of IP addresses to group for each VRRP instance.")
 
 	cmd.Flags().StringVar(&options.NotifyScript, "notify-script", "", "Run this script when state changes.")
 	cmd.Flags().StringVar(&options.CheckScript, "check-script", "", "Run this script at the check-interval to verify service is OK")
