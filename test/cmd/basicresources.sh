@@ -24,7 +24,7 @@ os::test::junit::declare_suite_start "cmd/basicresources"
 os::test::junit::declare_suite_start "cmd/basicresources/versionreporting"
 # Test to make sure that we're reporting the correct version information from endpoints and the correct
 # User-Agent information from our clients regardless of which resources they're trying to access
-os::build::get_version_vars
+os::build::version::get_vars
 os_git_regex="$( escape_regex "${OS_GIT_VERSION%%-*}" )"
 kube_git_regex="$( escape_regex "${KUBE_GIT_VERSION%%-*}" )"
 etcd_version="$(echo "${ETCD_GIT_VERSION}" | sed -E "s/\-.*//g" | sed -E "s/v//")"
@@ -283,7 +283,7 @@ os::cmd::expect_success 'oc delete svc external'
 # Expose multiport service and verify we set a port in the route
 os::cmd::expect_success 'oc create -f test/testdata/multiport-service.yaml'
 os::cmd::expect_success 'oc expose svc/frontend --name route-with-set-port'
-os::cmd::expect_success_and_text "oc get route route-with-set-port --template='{{.spec.port.targetPort}}' --output-version=v1" "web"
+os::cmd::expect_success_and_text "oc get route route-with-set-port --template='{{.spec.port.targetPort}}'" "web"
 echo "expose: ok"
 os::test::junit::declare_suite_end
 

@@ -70,11 +70,13 @@ var legacyOpenshiftAdmissionPlugins = sets.NewString(
 	serviceadmit.ExternalIPPluginName,
 	"SecurityContextConstraint",
 	"SCCExecRestrictions",
+	"ResourceQuota",
 )
 
 // kubeAdmissionPlugins tracks kube plugins we use.  You may add to this list, but ONLY if they're from upstream kube
 var kubeAdmissionPlugins = sets.NewString(
 	lifecycle.PluginName,
+	"PodPreset",
 	"LimitRanger",
 	"ServiceAccount",
 	"DefaultStorageClass",
@@ -86,6 +88,7 @@ var kubeAdmissionPlugins = sets.NewString(
 	"OwnerReferencesPermissionEnforcement",
 	"PodNodeSelector",
 	"DefaultTolerationSeconds",
+	"ResourceQuota",
 )
 
 // TestAdmissionPluginNames makes sure that openshift admission plugins are prefixed with `openshift.io/`.

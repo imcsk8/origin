@@ -3,6 +3,7 @@ package master
 import (
 	"net"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -81,16 +82,14 @@ func TestAPIServerDefaults(t *testing.T) {
 			DefaultWatchCacheSize:   100,
 		},
 		SecureServing: &apiserveroptions.SecureServingOptions{
-			ServingOptions: apiserveroptions.ServingOptions{
-				BindAddress: net.ParseIP("0.0.0.0"),
-				BindPort:    6443,
-			},
+			BindAddress: net.ParseIP("0.0.0.0"),
+			BindPort:    6443,
 			ServerCert: apiserveroptions.GeneratableKeyCert{
 				CertDirectory: "/var/run/kubernetes",
 				PairName:      "apiserver",
 			},
 		},
-		InsecureServing: &apiserveroptions.ServingOptions{
+		InsecureServing: &kubeoptions.InsecureServingOptions{
 			BindAddress: net.ParseIP("127.0.0.1"),
 			BindPort:    8080,
 		},
@@ -147,8 +146,32 @@ func TestAPIServerDefaults(t *testing.T) {
 	}
 }
 
+// sortedGCIgnoredResources sorts by Group, then Resource.
+type sortedGCIgnoredResources []componentconfig.GroupResource
+
+func (r sortedGCIgnoredResources) Len() int {
+	return len(r)
+}
+
+func (r sortedGCIgnoredResources) Less(i, j int) bool {
+	if r[i].Group < r[j].Group {
+		return true
+	} else if r[i].Group > r[j].Group {
+		return false
+	}
+
+	return r[i].Resource < r[j].Resource
+}
+
+func (r sortedGCIgnoredResources) Swap(i, j int) {
+	r[i], r[j] = r[j], r[i]
+}
+
 func TestCMServerDefaults(t *testing.T) {
 	defaults := cmapp.NewCMServer()
+	// We need to sort GCIgnoredResources because it's built from a map, which means the insertion
+	// order is random.
+	sort.Sort(sortedGCIgnoredResources(defaults.GCIgnoredResources))
 
 	// This is a snapshot of the default config
 	// If the default changes (new fields are added, or default values change), we want to know
@@ -164,7 +187,7 @@ func TestCMServerDefaults(t *testing.T) {
 			ConcurrentJobSyncs:                5,
 			ConcurrentResourceQuotaSyncs:      5,
 			ConcurrentDeploymentSyncs:         5,
-			ConcurrentNamespaceSyncs:          2,
+			ConcurrentNamespaceSyncs:          5,
 			ConcurrentSATokenSyncs:            5,
 			ConcurrentServiceSyncs:            1,
 			ConcurrentGCSyncs:                 20,
@@ -209,15 +232,29 @@ func TestCMServerDefaults(t *testing.T) {
 				RenewDeadline: metav1.Duration{Duration: 10 * time.Second},
 				RetryPeriod:   metav1.Duration{Duration: 2 * time.Second},
 			},
-			ClusterSigningCertFile:            "/etc/kubernetes/ca/ca.pem",
-			ClusterSigningKeyFile:             "/etc/kubernetes/ca/ca.key",
-			EnableGarbageCollector:            true,
+			ClusterSigningCertFile: "/etc/kubernetes/ca/ca.pem",
+			ClusterSigningKeyFile:  "/etc/kubernetes/ca/ca.key",
+			EnableGarbageCollector: true,
+			GCIgnoredResources: []componentconfig.GroupResource{
+				{Group: "extensions", Resource: "replicationcontrollers"},
+				{Group: "", Resource: "bindings"},
+				{Group: "", Resource: "componentstatuses"},
+				{Group: "", Resource: "events"},
+				{Group: "authentication.k8s.io", Resource: "tokenreviews"},
+				{Group: "authorization.k8s.io", Resource: "subjectaccessreviews"},
+				{Group: "authorization.k8s.io", Resource: "selfsubjectaccessreviews"},
+				{Group: "authorization.k8s.io", Resource: "localsubjectaccessreviews"},
+				{Group: "apiregistration.k8s.io", Resource: "apiservices"},
+			},
 			DisableAttachDetachReconcilerSync: false,
 			ReconcilerSyncLoopPeriod:          metav1.Duration{Duration: 60 * time.Second},
 			Controllers:                       []string{"*"},
 			EnableTaintManager:                true,
 		},
 	}
+
+	// Because we sorted the defaults, we need to sort the expectedDefaults too.
+	sort.Sort(sortedGCIgnoredResources(expectedDefaults.GCIgnoredResources))
 
 	if !reflect.DeepEqual(defaults, expectedDefaults) {
 		t.Logf("expected defaults, actual defaults: \n%s", diff.ObjectReflectDiff(expectedDefaults, defaults))

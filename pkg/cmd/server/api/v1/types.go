@@ -53,6 +53,11 @@ type NodeConfig struct {
 	// system, this value should be set to the upstream nameservers dnsmasq resolves with.
 	DNSNameservers []string `json:"dnsNameservers"`
 
+	// DNSRecursiveResolvConf is a path to a resolv.conf file that contains settings for an upstream server.
+	// Only the nameservers and port fields are used. The file must exist and parse correctly. It adds extra
+	// nameservers to DNSNameservers if set.
+	DNSRecursiveResolvConf string `json:"dnsRecursiveResolvConf"`
+
 	// Deprecated and maintained for backward compatibility, use NetworkConfig.NetworkPluginName instead
 	DeprecatedNetworkPluginName string `json:"networkPluginName,omitempty"`
 
@@ -182,6 +187,9 @@ type MasterConfig struct {
 	// oauth token and client certificate authenticators
 	AuthConfig MasterAuthConfig `json:"authConfig"`
 
+	// AggregatorConfig has options for configuring the aggregator component of the API server.
+	AggregatorConfig AggregatorConfig `json:"aggregatorConfig"`
+
 	// CORSAllowedOrigins
 	CORSAllowedOrigins []string `json:"corsAllowedOrigins"`
 
@@ -197,12 +205,17 @@ type MasterConfig struct {
 	// values are recognized at this time.
 	Controllers string `json:"controllers"`
 	// PauseControllers instructs the master to not automatically start controllers, but instead
-	// to wait until a notification to the server is received before launching them.
+	// to wait until a notification to the server is received before launching them. This field is
+	// ignored if controllerConfig.lockServiceName is specified.
+	// Deprecated: Will be removed in 3.7.
 	PauseControllers bool `json:"pauseControllers"`
-	// ControllerLeaseTTL enables controller election, instructing the master to attempt to acquire
-	// a lease before controllers start and renewing it within a number of seconds defined by this value.
-	// Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or
-	// omitted) and controller election can be disabled with -1.
+	// ControllerLeaseTTL enables controller election against etcd, instructing the master to attempt to
+	// acquire a lease before controllers start and renewing it within a number of seconds defined by this
+	// value. Setting this value non-negative forces pauseControllers=true. This value defaults off (0, or
+	// omitted) and controller election can be disabled with -1. This field is ignored if
+	// controllerConfig.lockServiceName is specified.
+	// Deprecated: use controllerConfig.lockServiceName to force leader election via config, and the
+	//   appropriate leader election flags in controllerArguments. Will be removed in 3.9.
 	ControllerLeaseTTL int `json:"controllerLeaseTTL"`
 
 	// AdmissionConfig contains admission control plugin configuration.
@@ -298,6 +311,12 @@ type RequestHeaderAuthenticationOptions struct {
 	GroupHeaders []string `json:"groupHeaders"`
 	// ExtraHeaderPrefixes is the set of request header prefixes to inspect for user extra. X-Remote-Extra- is suggested.
 	ExtraHeaderPrefixes []string `json:"extraHeaderPrefixes"`
+}
+
+// AggregatorConfig holds information required to make the aggregator function.
+type AggregatorConfig struct {
+	// ProxyClientInfo specifies the client cert/key to use when proxying to aggregated API servers
+	ProxyClientInfo CertInfo `json:"proxyClientInfo"`
 }
 
 // AuditConfig holds configuration for the audit capabilities
@@ -1329,9 +1348,35 @@ type AdmissionConfig struct {
 
 // ControllerConfig holds configuration values for controllers
 type ControllerConfig struct {
+	// Election defines the configuration for electing a controller instance to make changes to
+	// the cluster. If unspecified, the ControllerTTL value is checked to determine whether the
+	// legacy direct etcd election code will be used.
+	Election *ControllerElectionConfig `json:"election"`
 	// ServiceServingCert holds configuration for service serving cert signer which creates cert/key pairs for
 	// pods fulfilling a service to serve with.
 	ServiceServingCert ServiceServingCert `json:"serviceServingCert"`
+}
+
+// ControllerElectionConfig contains configuration values for deciding how a controller
+// will be elected to act as leader.
+type ControllerElectionConfig struct {
+	// LockName is the resource name used to act as the lock for determining which controller
+	// instance should lead.
+	LockName string `json:"lockName"`
+	// LockNamespace is the resource namespace used to act as the lock for determining which
+	// controller instance should lead. It defaults to "kube-system"
+	LockNamespace string `json:"lockNamespace"`
+	// LockResource is the group and resource name to use to coordinate for the controller lock.
+	// If unset, defaults to "endpoints".
+	LockResource GroupResource `json:"lockResource"`
+}
+
+// GroupResource points to a resource by its name and API group.
+type GroupResource struct {
+	// Group is the name of an API group
+	Group string `json:"group"`
+	// Resource is the name of a resource.
+	Resource string `json:"resource"`
 }
 
 // ServiceServingCert holds configuration for service serving cert signer which creates cert/key pairs for

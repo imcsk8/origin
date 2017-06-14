@@ -253,7 +253,7 @@ func GetOpenshiftBootstrapClusterRoles() []authorizationapi.ClusterRole {
 				},
 			},
 			Rules: []authorizationapi.PolicyRule{
-				authorizationapi.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources(authorizationapi.DockerBuildResource).RuleOrDie(),
+				authorizationapi.NewRule("create").Groups(buildGroup, legacyBuildGroup).Resources(authorizationapi.DockerBuildResource, authorizationapi.OptimizedDockerBuildResource).RuleOrDie(),
 			},
 		},
 		{
@@ -489,7 +489,7 @@ func GetOpenshiftBootstrapClusterRoles() []authorizationapi.ClusterRole {
 				authorizationapi.NewRule("get").Groups(userGroup, legacyUserGroup).Resources("users").Names("~").RuleOrDie(),
 				authorizationapi.NewRule("list").Groups(projectGroup, legacyProjectGroup).Resources("projectrequests").RuleOrDie(),
 				authorizationapi.NewRule("get", "list").Groups(authzGroup, legacyAuthzGroup).Resources("clusterroles").RuleOrDie(),
-				authorizationapi.NewRule("list").Groups(storageGroup).Resources("storageclasses").RuleOrDie(),
+				authorizationapi.NewRule("get", "list").Groups(storageGroup).Resources("storageclasses").RuleOrDie(),
 				authorizationapi.NewRule("list", "watch").Groups(projectGroup, legacyProjectGroup).Resources("projects").RuleOrDie(),
 				authorizationapi.NewRule("create").Groups(authzGroup, legacyAuthzGroup).Resources("selfsubjectrulesreviews").RuleOrDie(),
 				authorizationapi.NewRule("create").Groups(kAuthzGroup).Resources("selfsubjectaccessreviews").RuleOrDie(),
@@ -631,6 +631,10 @@ func GetOpenshiftBootstrapClusterRoles() []authorizationapi.ClusterRole {
 				},
 			},
 			Rules: []authorizationapi.PolicyRule{
+				// "delete" is required here for compatibility with older deployer images
+				// (see https://github.com/openshift/origin/pull/14322#issuecomment-303968976)
+				// TODO: remove "delete" rule few releases after 3.6
+				authorizationapi.NewRule("delete").Groups(kapiGroup).Resources("replicationcontrollers").RuleOrDie(),
 				authorizationapi.NewRule("get", "list", "watch", "update").Groups(kapiGroup).Resources("replicationcontrollers").RuleOrDie(),
 				authorizationapi.NewRule("get", "list", "watch", "create").Groups(kapiGroup).Resources("pods").RuleOrDie(),
 				authorizationapi.NewRule("get").Groups(kapiGroup).Resources("pods/log").RuleOrDie(),
@@ -1317,8 +1321,24 @@ func convertClusterRoles(in []rbac.ClusterRole) ([]authorizationapi.ClusterRole,
 			errs = append(errs, fmt.Errorf("error converting %q: %v", in[i].Name, err))
 			continue
 		}
+		// adding annotation to any role not explicitly in the whitelist below
+		if !rolesToShow.Has(newRole.Name) {
+			newRole.Annotations[roleSystemOnly] = roleIsSystemOnly
+		}
 		out = append(out, *newRole)
 	}
 
 	return out, kutilerrors.NewAggregate(errs)
 }
+
+// The current list of roles considered useful for normal users (non-admin)
+var rolesToShow = sets.NewString(
+	"admin",
+	"basic-user",
+	"edit",
+	"system:deployer",
+	"system:image-builder",
+	"system:image-puller",
+	"system:image-pusher",
+	"view",
+)

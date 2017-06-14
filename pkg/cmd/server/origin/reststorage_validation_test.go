@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"k8s.io/apiserver/pkg/registry/rest"
+	apiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/apiserver/pkg/storage/storagebackend"
 	extapi "k8s.io/kubernetes/pkg/apis/extensions"
 	kclientsetexternal "k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
@@ -18,6 +19,8 @@ import (
 
 	_ "github.com/openshift/origin/pkg/api/install"
 	"github.com/openshift/origin/pkg/api/validation"
+	authorizationinformer "github.com/openshift/origin/pkg/authorization/generated/informers/internalversion"
+	authorizationclientfake "github.com/openshift/origin/pkg/authorization/generated/internalclientset/fake"
 	"github.com/openshift/origin/pkg/client/testclient"
 	"github.com/openshift/origin/pkg/controller/shared"
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
@@ -37,9 +40,16 @@ var KnownUpdateValidationExceptions = []reflect.Type{
 // TestValidationRegistration makes sure that any RESTStorage that allows create or update has the correct validation register.
 // It doesn't guarantee that it's actually called, but it does guarantee that it at least exists
 func TestValidationRegistration(t *testing.T) {
-	config := fakeMasterConfig()
+	config := fakeOpenshiftAPIServerConfig()
+	// serverConfig, err := config.newOpenshiftAPIConfig(apiserver.Config{})
+	// if err != nil {
+	// 	t.Fatal(err)
+	// }
 
-	storageMap := config.GetRestStorage()
+	storageMap, err := config.GetRestStorage()
+	if err != nil {
+		t.Fatal(err)
+	}
 	for key, resourceStorage := range storageMap {
 		for resource, storage := range resourceStorage {
 			obj := storage.New()
@@ -81,12 +91,39 @@ func fakeMasterConfig() *MasterConfig {
 	internalkubeInformerFactory := kinternalinformers.NewSharedInformerFactory(fakeinternal.NewSimpleClientset(), 1*time.Second)
 	externalKubeInformerFactory := kinformers.NewSharedInformerFactory(fakeexternal.NewSimpleClientset(), 1*time.Second)
 	informerFactory := shared.NewInformerFactory(internalkubeInformerFactory, externalKubeInformerFactory, fakeinternal.NewSimpleClientset(), testclient.NewSimpleFake(), shared.DefaultListerWatcherOverrides{}, 1*time.Second)
+	authorizationInformerFactory := authorizationinformer.NewSharedInformerFactory(authorizationclientfake.NewSimpleClientset(), 0)
+
 	return &MasterConfig{
 		KubeletClientConfig:                           &kubeletclient.KubeletClientConfig{},
 		RESTOptionsGetter:                             restoptions.NewSimpleGetter(&storagebackend.Config{ServerList: []string{"localhost"}}),
 		Informers:                                     informerFactory,
+		AuthorizationInformers:                        authorizationInformerFactory,
 		ClusterQuotaMappingController:                 clusterquotamapping.NewClusterQuotaMappingController(internalkubeInformerFactory.Core().InternalVersion().Namespaces(), informerFactory.ClusterResourceQuotas()),
 		PrivilegedLoopbackKubernetesClientsetInternal: &kclientsetinternal.Clientset{},
 		PrivilegedLoopbackKubernetesClientsetExternal: &kclientsetexternal.Clientset{},
 	}
+}
+
+func fakeOpenshiftAPIServerConfig() *OpenshiftAPIConfig {
+	internalkubeInformerFactory := kinternalinformers.NewSharedInformerFactory(fakeinternal.NewSimpleClientset(), 1*time.Second)
+	externalKubeInformerFactory := kinformers.NewSharedInformerFactory(fakeexternal.NewSimpleClientset(), 1*time.Second)
+	informerFactory := shared.NewInformerFactory(internalkubeInformerFactory, externalKubeInformerFactory, fakeinternal.NewSimpleClientset(), testclient.NewSimpleFake(), shared.DefaultListerWatcherOverrides{}, 1*time.Second)
+	authorizationInformerFactory := authorizationinformer.NewSharedInformerFactory(authorizationclientfake.NewSimpleClientset(), 0)
+
+	ret := &OpenshiftAPIConfig{
+		GenericConfig: &apiserver.Config{
+			RESTOptionsGetter: restoptions.NewSimpleGetter(&storagebackend.Config{ServerList: []string{"localhost"}}),
+		},
+
+		KubeClientExternal:            &kclientsetexternal.Clientset{},
+		KubeClientInternal:            &kclientsetinternal.Clientset{},
+		KubeletClientConfig:           &kubeletclient.KubeletClientConfig{},
+		KubeInternalInformers:         internalkubeInformerFactory,
+		AuthorizationInformers:        authorizationInformerFactory,
+		DeprecatedInformers:           informerFactory,
+		EnableBuilds:                  true,
+		EnableTemplateServiceBroker:   false,
+		ClusterQuotaMappingController: clusterquotamapping.NewClusterQuotaMappingController(internalkubeInformerFactory.Core().InternalVersion().Namespaces(), informerFactory.ClusterResourceQuotas()),
+	}
+	return ret
 }

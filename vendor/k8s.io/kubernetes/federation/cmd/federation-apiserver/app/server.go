@@ -45,6 +45,9 @@ import (
 	"k8s.io/kubernetes/pkg/generated/openapi"
 	"k8s.io/kubernetes/pkg/kubeapiserver"
 	kubeapiserveradmission "k8s.io/kubernetes/pkg/kubeapiserver/admission"
+	kubeoptions "k8s.io/kubernetes/pkg/kubeapiserver/options"
+	kubeserver "k8s.io/kubernetes/pkg/kubeapiserver/server"
+	quotainstall "k8s.io/kubernetes/pkg/quota/install"
 	"k8s.io/kubernetes/pkg/registry/cachesize"
 	"k8s.io/kubernetes/pkg/routes"
 	"k8s.io/kubernetes/pkg/version"
@@ -81,7 +84,10 @@ func Run(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 // stop with the given channel.
 func NonBlockingRun(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 	// set defaults
-	if err := s.GenericServerRunOptions.DefaultAdvertiseAddress(s.SecureServing, s.InsecureServing); err != nil {
+	if err := s.GenericServerRunOptions.DefaultAdvertiseAddress(s.SecureServing); err != nil {
+		return err
+	}
+	if err := kubeoptions.DefaultAdvertiseAddress(s.GenericServerRunOptions, s.InsecureServing); err != nil {
 		return err
 	}
 	if err := s.SecureServing.MaybeDefaultWithSelfSignedCerts(s.GenericServerRunOptions.AdvertiseAddress.String()); err != nil {
@@ -98,13 +104,12 @@ func NonBlockingRun(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 		return utilerrors.NewAggregate(errs)
 	}
 
-	genericConfig := genericapiserver.NewConfig().
-		WithSerializer(api.Codecs)
-
+	genericConfig := genericapiserver.NewConfig(api.Codecs)
 	if err := s.GenericServerRunOptions.ApplyTo(genericConfig); err != nil {
 		return err
 	}
-	if err := s.InsecureServing.ApplyTo(genericConfig); err != nil {
+	insecureServingOptions, err := s.InsecureServing.ApplyTo(genericConfig)
+	if err != nil {
 		return err
 	}
 	if err := s.SecureServing.ApplyTo(genericConfig); err != nil {
@@ -188,7 +193,11 @@ func NonBlockingRun(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 			glog.Fatalf("Error reading from cloud configuration file %s: %#v", s.CloudProvider.CloudConfigFile, err)
 		}
 	}
-	pluginInitializer := kubeapiserveradmission.NewPluginInitializer(client, sharedInformers, apiAuthorizer, cloudConfig)
+	// NOTE: we do not provide informers to the quota registry because admission level decisions
+	// do not require us to open watches for all items tracked by quota.
+	quotaRegistry := quotainstall.NewRegistry(nil, nil)
+	pluginInitializer := kubeapiserveradmission.NewPluginInitializer(client, sharedInformers, apiAuthorizer, cloudConfig, quotaRegistry)
+
 	admissionConfigProvider, err := admission.ReadAdmissionConfiguration(admissionControlPluginNames, s.GenericServerRunOptions.AdmissionControlConfigFile)
 	if err != nil {
 		return fmt.Errorf("failed to read plugin config: %v", err)
@@ -218,13 +227,13 @@ func NonBlockingRun(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 		cachesize.SetWatchCacheSizes(s.GenericServerRunOptions.WatchCacheSizes)
 	}
 
-	m, err := genericConfig.Complete().New()
+	m, err := genericConfig.Complete().New("federation", genericapiserver.EmptyDelegate)
 	if err != nil {
 		return err
 	}
 
-	routes.UIRedirect{}.Install(m.FallThroughHandler)
-	routes.Logs{}.Install(m.HandlerContainer)
+	routes.UIRedirect{}.Install(m.Handler.NonGoRestfulMux)
+	routes.Logs{}.Install(m.Handler.GoRestfulContainer)
 
 	installFederationAPIs(m, genericConfig.RESTOptionsGetter)
 	installCoreAPIs(s, m, genericConfig.RESTOptionsGetter)
@@ -233,6 +242,14 @@ func NonBlockingRun(s *options.ServerRunOptions, stopCh <-chan struct{}) error {
 	// TODO: Uncomment this once 1.6 is released.
 	//	installBatchAPIs(m, genericConfig.RESTOptionsGetter)
 	//	installAutoscalingAPIs(m, genericConfig.RESTOptionsGetter)
+
+	// run the insecure server now
+	if insecureServingOptions != nil {
+		insecureHandlerChain := kubeserver.BuildInsecureHandlerChain(m.UnprotectedHandler(), genericConfig)
+		if err := kubeserver.NonBlockingRun(insecureServingOptions, insecureHandlerChain, stopCh); err != nil {
+			return err
+		}
+	}
 
 	err = m.PrepareRun().NonBlockingRun(stopCh)
 	if err == nil {

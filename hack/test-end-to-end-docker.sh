@@ -11,6 +11,7 @@ unset KUBECONFIG
 os::util::environment::use_sudo
 os::cleanup::tmpdir
 os::util::environment::setup_all_server_vars
+os::util::environment::setup_time_vars
 export HOME="${FAKE_HOME_DIR}"
 
 # Allow setting $JUNIT_REPORT to toggle output behavior
@@ -21,11 +22,35 @@ fi
 function cleanup() {
 	return_code=$?
 	os::cleanup::all "${return_code}"
+
+	# restore journald to previous form
+	if os::util::ensure::system_binary_exists 'systemctl'; then
+		os::log::info "Restoring journald limits"
+		${USE_SUDO:+sudo} mv /etc/systemd/{journald.conf.bak,journald.conf}
+		${USE_SUDO:+sudo} systemctl restart systemd-journald.service
+		# Docker has "some" problems when journald is restarted, so we need to
+		# restart docker, as well.
+		${USE_SUDO:+sudo} systemctl restart docker.service
+	fi
+
 	exit "${return_code}"
 }
 trap "cleanup" EXIT
 
 os::log::system::start
+
+# This turns-off rate limiting in journald to bypass the problem from
+# https://github.com/openshift/origin/issues/12558.
+if os::util::ensure::system_binary_exists 'systemctl'; then
+	os::log::info "Turning off journald limits"
+	${USE_SUDO:+sudo} cp /etc/systemd/{journald.conf,journald.conf.bak}
+	os::util::sed "s/^.*RateLimitInterval.*$/RateLimitInterval=0/g" /etc/systemd/journald.conf
+	os::util::sed "s/^.*RateLimitBurst.*$/RateLimitBurst=0/g" /etc/systemd/journald.conf
+	${USE_SUDO:+sudo} systemctl restart systemd-journald.service
+	# Docker has "some" problems when journald is restarted, so we need to
+	# restart docker, as well.
+	${USE_SUDO:+sudo} systemctl restart docker.service
+fi
 
 # Setup
 os::log::info "openshift version: `openshift version`"
@@ -37,7 +62,9 @@ oc cluster up --server-loglevel=4 --version="${TAG}" \
         --host-data-dir="${VOLUME_DIR}/etcd" \
         --host-volumes-dir="${VOLUME_DIR}"
 
-oc cluster status
+os::test::junit::declare_suite_start "setup/start-oc_cluster_up"
+os::cmd::try_until_success "oc cluster status" "$((5*TIME_MIN))" "10"
+os::test::junit::declare_suite_end
 
 IMAGE_WORKING_DIR=/var/lib/origin
 docker cp origin:${IMAGE_WORKING_DIR}/openshift.local.config ${BASETMPDIR}

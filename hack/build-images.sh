@@ -13,19 +13,19 @@ os::util::ensure::gopath_binary_exists imagebuilder
 # image builds require RPMs to have been built
 os::build::release::check_for_rpms
 # OS_RELEASE_COMMIT is required by image-build
-os::build::detect_local_release_tars $(os::build::host_platform_friendly)
+os::build::archive::detect_local_release_tars $(os::build::host_platform_friendly)
 
 # Without this, the dockerregistry lacks gcs+oss storage drivers in non-cross builds.
 readonly OS_GOFLAGS_TAGS="include_gcs include_oss"
 
 # we need to mount RPMs into the container builds for installation
-OS_BUILD_IMAGE_ARGS="${OS_BUILD_IMAGE_ARGS:-} -mount ${OS_LOCAL_RPMPATH}/:/srv/origin-local-release/"
+OS_BUILD_IMAGE_ARGS="${OS_BUILD_IMAGE_ARGS:-} -mount ${OS_OUTPUT_RPMPATH}/:/srv/origin-local-release/"
 
 # Create link to file if the FS supports hardlinks, otherwise copy the file
 function ln_or_cp {
 	local src_file=$1
 	local dst_dir=$2
-	if os::build::is_hardlink_supported "${dst_dir}" ; then
+	if os::build::archive::internal::is_hardlink_supported "${dst_dir}" ; then
 		ln -f "${src_file}" "${dst_dir}"
 	else
 		cp -pf "${src_file}" "${dst_dir}"
@@ -89,12 +89,17 @@ tag_prefix="${OS_IMAGE_PREFIX:-"openshift/origin"}"
 
 # images that depend on "${tag_prefix}-source"
 image "${tag_prefix}-pod"                   images/pod
+image "${tag_prefix}-cluster-capacity"      images/cluster-capacity
+image "${tag_prefix}-service-catalog"       images/service-catalog
+
 # images that depend on "${tag_prefix}-base"
 image "${tag_prefix}"                       images/origin
 image "${tag_prefix}-haproxy-router"        images/router/haproxy
 image "${tag_prefix}-keepalived-ipfailover" images/ipfailover/keepalived
 image "${tag_prefix}-docker-registry"       images/dockerregistry
 image "${tag_prefix}-egress-router"         images/egress/router
+image "${tag_prefix}-egress-http-proxy"     images/egress/http-proxy
+image "${tag_prefix}-federation"            images/federation
 # images that depend on "${tag_prefix}
 image "${tag_prefix}-gitserver"             examples/gitserver
 image "${tag_prefix}-deployer"              images/deployer

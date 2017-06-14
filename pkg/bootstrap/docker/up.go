@@ -122,6 +122,8 @@ var (
 		"heapster standalone": "examples/heapster/heapster-standalone.yaml",
 	}
 	dockerVersion112 = semver.MustParse("1.12.0")
+
+	openshiftVersion36 = semver.MustParse("3.6.0")
 )
 
 // NewCmdUp creates a command that starts openshift on Docker with reasonable defaults
@@ -917,7 +919,18 @@ func (c *ClientStartConfig) ImportTemplates(out io.Writer) error {
 	if err := c.importObjects(out, openshiftNamespace, templateLocations); err != nil {
 		return err
 	}
-	return c.importObjects(out, "kube-system", adminTemplateLocations)
+	version, err := c.OpenShiftHelper().ServerVersion()
+	if err != nil {
+		return err
+	}
+	if shouldImportAdminTemplates(version) {
+		return c.importObjects(out, "kube-system", adminTemplateLocations)
+	}
+	return nil
+}
+
+func shouldImportAdminTemplates(v semver.Version) bool {
+	return v.GTE(openshiftVersion36)
 }
 
 // InstallLogging will start the installation of logging components
@@ -967,7 +980,7 @@ func (c *ClientStartConfig) ServerInfo(out io.Writer) error {
 	metricsInfo := ""
 	if c.ShouldInstallMetrics && c.ShouldInitializeData() {
 		metricsInfo = fmt.Sprintf("The metrics service is available at:\n"+
-			"    https://%s\n\n", openshift.MetricsHost(c.RoutingSuffix, c.ServerIP))
+			"    https://%s/hawkular/metrics\n\n", openshift.MetricsHost(c.RoutingSuffix, c.ServerIP))
 	}
 	loggingInfo := ""
 	if c.ShouldInstallLogging && c.ShouldInitializeData() {
@@ -1079,7 +1092,7 @@ func (c *CommonStartConfig) OpenShiftHelper() *openshift.Helper {
 // HostHelper returns a helper object to check Host configuration
 func (c *CommonStartConfig) HostHelper() *host.HostHelper {
 	if c.hostHelper == nil {
-		c.hostHelper = host.NewHostHelper(c.dockerClient, c.openshiftImage(), c.HostVolumesDir, c.HostConfigDir, c.HostDataDir, c.HostPersistentVolumesDir)
+		c.hostHelper = host.NewHostHelper(c.dockerClient, c.DockerHelper(), c.openshiftImage(), c.HostVolumesDir, c.HostConfigDir, c.HostDataDir, c.HostPersistentVolumesDir)
 	}
 	return c.hostHelper
 }

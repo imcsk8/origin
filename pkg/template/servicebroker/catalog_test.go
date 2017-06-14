@@ -36,6 +36,15 @@ func TestServiceFromTemplate(t *testing.T) {
 			{
 				Name: "param2",
 			},
+			{
+				Name:     "param3",
+				Generate: "expression",
+			},
+			{
+				Name:     "param4",
+				Generate: "expression",
+				Required: true,
+			},
 		},
 	}
 
@@ -61,22 +70,16 @@ func TestServiceFromTemplate(t *testing.T) {
 				Free:        true,
 				Bindable:    true,
 				Schemas: api.Schema{
-					ServiceInstances: api.ServiceInstances{
+					ServiceInstance: api.ServiceInstances{
 						Create: map[string]*schema.Schema{
 							"parameters": {
 								Type:      schema.PrimitiveTypes{schema.ObjectType},
 								SchemaRef: "http://json-schema.org/draft-04/schema",
 								Required: []string{
-									"template.openshift.io/namespace",
 									"template.openshift.io/requester-username",
 									"param1",
 								},
 								Properties: map[string]*schema.Schema{
-									"template.openshift.io/namespace": {
-										Title:       "Template service broker: namespace",
-										Description: "OpenShift namespace in which to provision service",
-										Type:        schema.PrimitiveTypes{schema.StringType},
-									},
 									"template.openshift.io/requester-username": {
 										Title:       "Template service broker: requester username",
 										Description: "OpenShift user requesting provision/bind",
@@ -90,11 +93,19 @@ func TestServiceFromTemplate(t *testing.T) {
 										Default: "",
 										Type:    schema.PrimitiveTypes{schema.StringType},
 									},
+									"param3": {
+										Default: "",
+										Type:    schema.PrimitiveTypes{schema.StringType},
+									},
+									"param4": {
+										Default: "",
+										Type:    schema.PrimitiveTypes{schema.StringType},
+									},
 								},
 							},
 						},
 					},
-					ServiceBindings: api.ServiceBindings{
+					ServiceBinding: api.ServiceBindings{
 						Create: map[string]*schema.Schema{
 							"parameters": {
 								Type:      schema.PrimitiveTypes{schema.ObjectType},

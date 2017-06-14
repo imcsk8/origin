@@ -184,7 +184,7 @@ func ValidateMasterConfig(config *api.MasterConfig, fldPath *field.Path) Validat
 	validationResults.Append(ValidateAPILevels(config.APILevels, api.KnownOpenShiftAPILevels, api.DeadOpenShiftAPILevels, fldPath.Child("apiLevels")))
 
 	if config.AdmissionConfig.PluginConfig != nil {
-		validationResults.AddErrors(ValidateAdmissionPluginConfig(config.AdmissionConfig.PluginConfig, fldPath.Child("admissionConfig", "pluginConfig"))...)
+		validationResults.Append(ValidateAdmissionPluginConfig(config.AdmissionConfig.PluginConfig, fldPath.Child("admissionConfig", "pluginConfig")))
 		validationResults.Append(ValidateAdmissionPluginConfigConflicts(config))
 	}
 	if len(config.AdmissionConfig.PluginOrderOverride) != 0 {
@@ -192,10 +192,9 @@ func ValidateMasterConfig(config *api.MasterConfig, fldPath *field.Path) Validat
 	}
 
 	validationResults.Append(ValidateControllerConfig(config.ControllerConfig, fldPath.Child("controllerConfig")))
-
 	validationResults.Append(ValidateAuditConfig(config.AuditConfig, fldPath.Child("auditConfig")))
-
 	validationResults.Append(ValidateMasterAuthConfig(config.AuthConfig, fldPath.Child("authConfig")))
+	validationResults.Append(ValidateAggregatorConfig(config.AggregatorConfig, fldPath.Child("aggregatorConfig")))
 
 	return validationResults
 }
@@ -226,12 +225,20 @@ func ValidateMasterAuthConfig(config api.MasterAuthConfig, fldPath *field.Path) 
 	return validationResults
 }
 
+func ValidateAggregatorConfig(config api.AggregatorConfig, fldPath *field.Path) ValidationResults {
+	validationResults := ValidationResults{}
+
+	validationResults.AddErrors(ValidateCertInfo(config.ProxyClientInfo, false, fldPath.Child("proxyClientInfo"))...)
+
+	return validationResults
+}
+
 func ValidateAuditConfig(config api.AuditConfig, fldPath *field.Path) ValidationResults {
 	validationResults := ValidationResults{}
 
 	if len(config.AuditFilePath) == 0 {
 		// for backwards compatibility reasons we can't error this out
-		validationResults.AddWarnings(field.Required(fldPath.Child("auditFilePath"), "audit can now be logged to a separate file"))
+		validationResults.AddWarnings(field.Required(fldPath.Child("auditFilePath"), "audit can not be logged to a separate file"))
 	}
 	if config.MaximumFileRetentionDays < 0 {
 		validationResults.AddErrors(field.Invalid(fldPath.Child("maximumFileRetentionDays"), config.MaximumFileRetentionDays, "must be greater than or equal to 0"))
@@ -249,6 +256,23 @@ func ValidateAuditConfig(config api.AuditConfig, fldPath *field.Path) Validation
 func ValidateControllerConfig(config api.ControllerConfig, fldPath *field.Path) ValidationResults {
 	validationResults := ValidationResults{}
 
+	if election := config.Election; election != nil {
+		if len(election.LockName) == 0 {
+			validationResults.AddErrors(field.Invalid(fldPath.Child("election", "lockName"), election.LockName, "may not be empty"))
+		}
+		for _, msg := range kvalidation.ValidateServiceName(election.LockName, false) {
+			validationResults.AddErrors(field.Invalid(fldPath.Child("election", "lockName"), election.LockName, msg))
+		}
+		if len(election.LockNamespace) == 0 {
+			validationResults.AddErrors(field.Invalid(fldPath.Child("election", "lockNamespace"), election.LockNamespace, "may not be empty"))
+		}
+		for _, msg := range kvalidation.ValidateNamespaceName(election.LockNamespace, false) {
+			validationResults.AddErrors(field.Invalid(fldPath.Child("election", "lockNamespace"), election.LockNamespace, msg))
+		}
+		if len(election.LockResource.Resource) == 0 {
+			validationResults.AddErrors(field.Invalid(fldPath.Child("election", "lockResource", "resource"), election.LockResource.Resource, "may not be empty"))
+		}
+	}
 	if config.ServiceServingCert.Signer != nil {
 		validationResults.AddErrors(ValidateCertInfo(*config.ServiceServingCert.Signer, true, fldPath.Child("serviceServingCert.signer"))...)
 	}
@@ -581,7 +605,7 @@ func ValidateKubernetesMasterConfig(config *api.KubernetesMasterConfig, fldPath 
 	}
 
 	if config.AdmissionConfig.PluginConfig != nil {
-		validationResults.AddErrors(ValidateAdmissionPluginConfig(config.AdmissionConfig.PluginConfig, fldPath.Child("admissionConfig", "pluginConfig"))...)
+		validationResults.Append(ValidateAdmissionPluginConfig(config.AdmissionConfig.PluginConfig, fldPath.Child("admissionConfig", "pluginConfig")))
 	}
 	if len(config.AdmissionConfig.PluginOrderOverride) != 0 {
 		validationResults.AddWarnings(field.Invalid(fldPath.Child("admissionConfig", "pluginOrderOverride"), config.AdmissionConfig.PluginOrderOverride, "specified admission ordering is being phased out.  Convert to DefaultAdmissionConfig in admissionConfig.pluginConfig."))
@@ -681,17 +705,28 @@ func ValidateControllerExtendedArguments(config api.ExtendedArguments, fldPath *
 	return ValidateExtendedArguments(config, cm.OriginControllerManagerAddFlags(kcmoptions.NewCMServer()), fldPath)
 }
 
-func ValidateAdmissionPluginConfig(pluginConfig map[string]api.AdmissionPluginConfig, fieldPath *field.Path) field.ErrorList {
-	allErrs := field.ErrorList{}
+// deprecatedAdmissionPluginNames returns the set of admission plugin names that are deprecated from use.
+func deprecatedAdmissionPluginNames() sets.String {
+	return sets.NewString("openshift.io/OriginResourceQuota")
+}
+
+func ValidateAdmissionPluginConfig(pluginConfig map[string]api.AdmissionPluginConfig, fieldPath *field.Path) ValidationResults {
+	validationResults := ValidationResults{}
+
+	deprecatedPlugins := deprecatedAdmissionPluginNames()
+
 	for name, config := range pluginConfig {
+		if deprecatedPlugins.Has(name) {
+			validationResults.AddWarnings(field.Invalid(fieldPath.Key(name), "", "specified admission plugin is deprecated"))
+		}
 		if len(config.Location) > 0 && config.Configuration != nil {
-			allErrs = append(allErrs, field.Invalid(fieldPath.Key(name), "", "cannot specify both location and embedded config"))
+			validationResults.AddErrors(field.Invalid(fieldPath.Key(name), "", "cannot specify both location and embedded config"))
 		}
 		if len(config.Location) == 0 && config.Configuration == nil {
-			allErrs = append(allErrs, field.Invalid(fieldPath.Key(name), "", "must specify either a location or an embedded config"))
+			validationResults.AddErrors(field.Invalid(fieldPath.Key(name), "", "must specify either a location or an embedded config"))
 		}
 	}
-	return allErrs
+	return validationResults
 
 }
 

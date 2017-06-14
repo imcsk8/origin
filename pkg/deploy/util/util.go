@@ -19,7 +19,15 @@ import (
 	kdeplutil "k8s.io/kubernetes/pkg/controller/deployment/util"
 
 	deployapi "github.com/openshift/origin/pkg/deploy/api"
+	deployapiv1 "github.com/openshift/origin/pkg/deploy/api/v1"
 	"github.com/openshift/origin/pkg/util/namer"
+)
+
+var (
+	// DeploymentConfigControllerRefKind contains the schema.GroupVersionKind for the
+	// deployment config. This is used in the ownerRef and GC client picks the appropriate
+	// client to get the deployment config.
+	DeploymentConfigControllerRefKind = deployapiv1.SchemeGroupVersion.WithKind("DeploymentConfig")
 )
 
 // NewDeploymentCondition creates a new deployment condition.
@@ -228,6 +236,19 @@ func EncodeDeploymentConfig(config *deployapi.DeploymentConfig, codec runtime.Co
 	return string(bytes[:]), nil
 }
 
+func NewControllerRef(config *deployapi.DeploymentConfig) *metav1.OwnerReference {
+	blockOwnerDeletion := true
+	isController := true
+	return &metav1.OwnerReference{
+		APIVersion:         DeploymentConfigControllerRefKind.GroupVersion().String(),
+		Kind:               DeploymentConfigControllerRefKind.Kind,
+		Name:               config.Name,
+		UID:                config.UID,
+		BlockOwnerDeletion: &blockOwnerDeletion,
+		Controller:         &isController,
+	}
+}
+
 // MakeDeployment creates a deployment represented as a ReplicationController and based on the given
 // DeploymentConfig. The controller replica count will be zero.
 func MakeDeployment(config *deployapi.DeploymentConfig, codec runtime.Codec) (*api.ReplicationController, error) {
@@ -279,6 +300,7 @@ func MakeDeployment(config *deployapi.DeploymentConfig, codec runtime.Codec) (*a
 	podAnnotations[deployapi.DeploymentConfigAnnotation] = config.Name
 	podAnnotations[deployapi.DeploymentVersionAnnotation] = strconv.FormatInt(config.Status.LatestVersion, 10)
 
+	controllerRef := NewControllerRef(config)
 	deployment := &api.ReplicationController{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      deploymentName,
@@ -292,7 +314,9 @@ func MakeDeployment(config *deployapi.DeploymentConfig, codec runtime.Codec) (*a
 				deployapi.DesiredReplicasAnnotation:    strconv.Itoa(int(config.Spec.Replicas)),
 				deployapi.DeploymentReplicasAnnotation: strconv.Itoa(0),
 			},
-			Labels: controllerLabels,
+			Labels:          controllerLabels,
+			OwnerReferences: []metav1.OwnerReference{*controllerRef},
+			Finalizers:      []string{metav1.FinalizerDeleteDependents},
 		},
 		Spec: api.ReplicationControllerSpec{
 			// The deployment should be inactive initially

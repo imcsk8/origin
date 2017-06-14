@@ -10,6 +10,8 @@ import (
 
 	"github.com/golang/glog"
 
+	miekgdns "github.com/miekg/dns"
+
 	kerrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -29,7 +31,6 @@ import (
 	"k8s.io/kubernetes/pkg/cloudprovider"
 	"k8s.io/kubernetes/pkg/kubelet"
 	"k8s.io/kubernetes/pkg/kubelet/dockertools"
-	kubeletnetwork "k8s.io/kubernetes/pkg/kubelet/network"
 	kubeletcni "k8s.io/kubernetes/pkg/kubelet/network/cni"
 	kubeletserver "k8s.io/kubernetes/pkg/kubelet/server"
 	kubelettypes "k8s.io/kubernetes/pkg/kubelet/types"
@@ -266,13 +267,6 @@ func BuildKubernetesNodeConfig(options configapi.NodeConfig, enableProxy, enable
 	}
 	deps.Cloud = cloud
 
-	// Replace the kubelet-created CNI plugin with the SDN plugin
-	// Kubelet must be initialized with NetworkPluginName="cni" but
-	// the SDN plugin (if available) needs to be the only one used
-	if sdnPlugin != nil {
-		deps.NetworkPlugins = []kubeletnetwork.NetworkPlugin{sdnPlugin}
-	}
-
 	// provide any config overrides
 	//deps.NodeName = options.NodeName
 	deps.KubeClient = externalKubeClient
@@ -346,8 +340,24 @@ func BuildKubernetesNodeConfig(options configapi.NodeConfig, enableProxy, enable
 		}
 		dnsConfig.Domain = server.ClusterDomain + "."
 		dnsConfig.Local = "openshift.default.svc." + dnsConfig.Domain
-		if len(options.DNSNameservers) > 0 {
-			dnsConfig.Nameservers = options.DNSNameservers
+
+		// identify override nameservers
+		var nameservers []string
+		for _, s := range options.DNSNameservers {
+			nameservers = append(nameservers, s)
+		}
+		if len(options.DNSRecursiveResolvConf) > 0 {
+			c, err := miekgdns.ClientConfigFromFile(options.DNSRecursiveResolvConf)
+			if err != nil {
+				return nil, fmt.Errorf("could not start DNS, unable to read config file: %v", err)
+			}
+			for _, s := range c.Servers {
+				nameservers = append(nameservers, net.JoinHostPort(s, c.Port))
+			}
+		}
+
+		if len(nameservers) > 0 {
+			dnsConfig.Nameservers = nameservers
 		}
 
 		services, err := dns.NewCachedServiceAccessor(internalKubeInformers.Core().InternalVersion().Services())

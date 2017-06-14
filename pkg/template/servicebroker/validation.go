@@ -3,7 +3,6 @@ package servicebroker
 import (
 	"fmt"
 
-	"k8s.io/apimachinery/pkg/api/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	"github.com/openshift/origin/pkg/openservicebroker/api"
@@ -12,23 +11,25 @@ import (
 	uservalidation "github.com/openshift/origin/pkg/user/api/validation"
 )
 
+// ValidateProvisionRequest ensures that a ProvisionRequest is valid, beyond
+// the validation carried out by the service broker framework itself.
 func ValidateProvisionRequest(preq *api.ProvisionRequest) field.ErrorList {
 	var allErrs field.ErrorList
 
 	for key := range preq.Parameters {
 		if !templatevalidation.ParameterNameRegexp.MatchString(key) &&
-			key != templateapi.NamespaceParameterKey &&
 			key != templateapi.RequesterUsernameParameterKey {
-			allErrs = append(allErrs, field.Invalid(field.NewPath("parameters."+key), key, fmt.Sprintf("does not match %v", templatevalidation.ParameterNameRegexp)))
+			allErrs = append(allErrs, field.Invalid(field.NewPath("parameters", key), key, fmt.Sprintf("does not match %v", templatevalidation.ParameterNameRegexp)))
 		}
 	}
 
-	allErrs = append(allErrs, validateParameter(templateapi.NamespaceParameterKey, preq.Parameters[templateapi.NamespaceParameterKey], validation.ValidateNamespaceName)...)
 	allErrs = append(allErrs, validateParameter(templateapi.RequesterUsernameParameterKey, preq.Parameters[templateapi.RequesterUsernameParameterKey], uservalidation.ValidateUserName)...)
 
 	return allErrs
 }
 
+// ValidateBindRequest ensures that a BindRequest is valid, beyond the
+// validation carried out by the service broker framework itself.
 func ValidateBindRequest(breq *api.BindRequest) field.ErrorList {
 	var allErrs field.ErrorList
 
