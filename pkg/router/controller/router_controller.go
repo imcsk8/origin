@@ -206,6 +206,9 @@ func (c *RouterController) HandleRoute() {
 
 // HandleEndpoints handles a single Endpoints event and refreshes the router backend.
 func (c *RouterController) HandleEndpoints() {
+
+	endpoint_count := c.EndpointsListCount()
+	glog.V(2).Infof("----------ENDPOINT COUNT: %s", endpoint_count)
 	eventType, endpoints, err := c.NextEndpoints()
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("unable to read endpoints: %v", err))
