@@ -46,18 +46,21 @@ var (
 	readWrite = []string{"get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"}
 	read      = []string{"get", "list", "watch"}
 
-	kapiGroup           = kapi.GroupName
-	appsGroup           = apps.GroupName
-	autoscalingGroup    = autoscaling.GroupName
-	batchGroup          = batch.GroupName
-	certificatesGroup   = certificates.GroupName
-	extensionsGroup     = extensions.GroupName
-	policyGroup         = policy.GroupName
-	rbacGroup           = rbac.GroupName
-	securityGroup       = securityapi.GroupName
-	legacySecurityGroup = securityapi.LegacyGroupName
-	storageGroup        = storage.GroupName
-	settingsGroup       = settings.GroupName
+	kapiGroup            = kapi.GroupName
+	appsGroup            = apps.GroupName
+	autoscalingGroup     = autoscaling.GroupName
+	apiExtensionsGroup   = "apiextensions.k8s.io"
+	apiRegistrationGroup = "apiregistration.k8s.io"
+	batchGroup           = batch.GroupName
+	certificatesGroup    = certificates.GroupName
+	extensionsGroup      = extensions.GroupName
+	networkingGroup      = "networking.k8s.io"
+	policyGroup          = policy.GroupName
+	rbacGroup            = rbac.GroupName
+	securityGroup        = securityapi.GroupName
+	legacySecurityGroup  = securityapi.LegacyGroupName
+	storageGroup         = storage.GroupName
+	settingsGroup        = settings.GroupName
 
 	authzGroup          = authorizationapi.GroupName
 	kAuthzGroup         = kauthorizationapi.GroupName
@@ -159,7 +162,11 @@ func GetOpenshiftBootstrapClusterRoles() []authorizationapi.ClusterRole {
 					"replicationcontrollers/status", "resourcequotas", "resourcequotas/status", "securitycontextconstraints", "serviceaccounts", "services",
 					"services/status").RuleOrDie(),
 
-				authorizationapi.NewRule(read...).Groups(appsGroup).Resources("statefulsets", "statefulsets/status", "deployments", "deployments/scale", "deployments/status").RuleOrDie(),
+				authorizationapi.NewRule(read...).Groups(appsGroup).Resources("statefulsets", "statefulsets/status", "deployments", "deployments/scale", "deployments/status", "controllerrevisions").RuleOrDie(),
+
+				authorizationapi.NewRule(read...).Groups(apiExtensionsGroup).Resources("customresourcedefinitions", "customresourcedefinitions/status").RuleOrDie(),
+
+				authorizationapi.NewRule(read...).Groups(apiRegistrationGroup).Resources("apiservices", "apiservices/status").RuleOrDie(),
 
 				authorizationapi.NewRule(read...).Groups(autoscalingGroup).Resources("horizontalpodautoscalers", "horizontalpodautoscalers/status").RuleOrDie(),
 
@@ -170,6 +177,8 @@ func GetOpenshiftBootstrapClusterRoles() []authorizationapi.ClusterRole {
 					"deployments/status", "horizontalpodautoscalers", "horizontalpodautoscalers/status", "ingresses", "ingresses/status", "jobs", "jobs/status",
 					"networkpolicies", "podsecuritypolicies", "replicasets", "replicasets/scale", "replicasets/status", "replicationcontrollers",
 					"replicationcontrollers/scale", "storageclasses", "thirdpartyresources").RuleOrDie(),
+
+				authorizationapi.NewRule(read...).Groups(networkingGroup).Resources("networkpolicies").RuleOrDie(),
 
 				authorizationapi.NewRule(read...).Groups(policyGroup).Resources("poddisruptionbudgets", "poddisruptionbudgets/status").RuleOrDie(),
 
@@ -956,7 +965,6 @@ func GetBootstrapClusterRoles() []authorizationapi.ClusterRole {
 	// dead cluster roles need to be checked for conflicts (in case something new comes up)
 	// so add them to this list.
 	openshiftClusterRoles = append(openshiftClusterRoles, GetDeadClusterRoles()...)
-	openshiftSAClusterRoles := InfraSAs.AllRoles()
 	kubeClusterRoles, err := GetKubeBootstrapClusterRoles()
 	// coder error
 	if err != nil {
@@ -981,9 +989,6 @@ func GetBootstrapClusterRoles() []authorizationapi.ClusterRole {
 	for _, clusterRole := range openshiftClusterRoles {
 		openshiftClusterRoleNames.Insert(clusterRole.Name)
 	}
-	for _, clusterRole := range openshiftSAClusterRoles {
-		openshiftClusterRoleNames.Insert(clusterRole.Name)
-	}
 	for _, clusterRole := range kubeClusterRoles {
 		kubeClusterRoleNames.Insert(clusterRole.Name)
 	}
@@ -1002,7 +1007,6 @@ func GetBootstrapClusterRoles() []authorizationapi.ClusterRole {
 
 	finalClusterRoles := []authorizationapi.ClusterRole{}
 	finalClusterRoles = append(finalClusterRoles, openshiftClusterRoles...)
-	finalClusterRoles = append(finalClusterRoles, openshiftSAClusterRoles...)
 	finalClusterRoles = append(finalClusterRoles, openshiftControllerRoles...)
 	finalClusterRoles = append(finalClusterRoles, kubeSAClusterRoles...)
 	for i := range kubeClusterRoles {
@@ -1260,9 +1264,6 @@ var clusterRoleConflicts = sets.NewString(
 
 	// TODO this should probably be re-swizzled to be the delta on top of the kube role
 	"system:discovery",
-
-	// TODO deconflict this
-	"system:node-bootstrapper",
 
 	// TODO these should be reconsidered
 	"cluster-admin",

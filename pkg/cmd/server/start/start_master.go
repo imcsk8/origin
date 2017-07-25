@@ -27,7 +27,6 @@ import (
 	kapi "k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/capabilities"
 	kinformers "k8s.io/kubernetes/pkg/client/informers/informers_generated/externalversions"
-	"k8s.io/kubernetes/pkg/cloudprovider"
 	kcmdutil "k8s.io/kubernetes/pkg/kubectl/cmd/util"
 	kubelettypes "k8s.io/kubernetes/pkg/kubelet/types"
 
@@ -210,7 +209,7 @@ func (o MasterOptions) StartMaster() error {
 
 	// TODO: this should be encapsulated by RunMaster, but StartAllInOne has no
 	// way to communicate whether RunMaster should block.
-	go daemon.SdNotify("READY=1")
+	go daemon.SdNotify(false, "READY=1")
 	select {}
 }
 
@@ -404,12 +403,10 @@ func (m *Master) Start() error {
 		return fmt.Errorf("KubernetesMasterConfig is required to start this server - use of external Kubernetes is no longer supported.")
 	}
 
-	if len(m.config.AggregatorConfig.ProxyClientInfo.KeyFile) > 0 {
-		// install aggregator types into the scheme so that "normal" RESTOptionsGetters can work for us.
-		// done in Start() prior to doing any other initialization so we don't mutate the scheme after it is being used by clients in other goroutines.
-		// TODO: make scheme threadsafe and do this as part of aggregator config building
-		aggregatorinstall.Install(kapi.GroupFactoryRegistry, kapi.Registry, kapi.Scheme)
-	}
+	// install aggregator types into the scheme so that "normal" RESTOptionsGetters can work for us.
+	// done in Start() prior to doing any other initialization so we don't mutate the scheme after it is being used by clients in other goroutines.
+	// TODO: make scheme threadsafe and do this as part of aggregator config building
+	aggregatorinstall.Install(kapi.GroupFactoryRegistry, kapi.Registry, kapi.Scheme)
 
 	// we have a strange, optional linkage from controllers to the API server regarding the plug.  In the end, this should be structured
 	// as a separate API server which can be chained as a delegate
@@ -492,12 +489,12 @@ func (m *Master) Start() error {
 		go func() {
 			controllerPlug.WaitForStart()
 
-			controllerContext, err := getControllerContext(*m.config, kubeControllerManagerConfig, informers, utilwait.NeverStop)
+			controllerContext, err := getControllerContext(*m.config, kubeControllerManagerConfig, cloudProvider, informers, utilwait.NeverStop)
 			if err != nil {
 				glog.Fatal(err)
 			}
 
-			if err := startControllers(*m.config, allocationController, cloudProvider, informers, controllerContext); err != nil {
+			if err := startControllers(*m.config, allocationController, informers, controllerContext); err != nil {
 				glog.Fatal(err)
 			}
 
@@ -520,6 +517,7 @@ func (m *Master) Start() error {
 		if err != nil {
 			return err
 		}
+		kubeMasterConfig.Master.GenericConfig.SharedInformerFactory = informers.GetClientGoKubeInformers()
 
 		glog.Infof("Starting master on %s (%s)", m.config.ServingInfo.BindAddress, version.Get().String())
 		glog.Infof("Public master address is %s", m.config.MasterPublicURL)
@@ -689,7 +687,7 @@ func (i genericInformers) ForResource(resource schema.GroupVersionResource) (kin
 
 // startControllers launches the controllers
 // allocation controller is passed in because it wants direct etcd access.  Naughty.
-func startControllers(options configapi.MasterConfig, allocationController origin.SecurityAllocationController, cloudProvider cloudprovider.Interface, informers *informers, controllerContext origincontrollers.ControllerContext) error {
+func startControllers(options configapi.MasterConfig, allocationController origin.SecurityAllocationController, informers *informers, controllerContext origincontrollers.ControllerContext) error {
 	openshiftControllerConfig, err := origin.BuildOpenshiftControllerConfig(options, informers)
 	if err != nil {
 		return err
@@ -733,9 +731,16 @@ func startControllers(options configapi.MasterConfig, allocationController origi
 		return err
 	}
 
+	//  the service account passed for the recyclable volume plugins needs to exist.  We want to do this via the init function, but its a kube init function
+	// for the rebase, create that service account here
+	// TODO make this a lot cleaner
+	if _, err := controllerContext.ClientBuilder.Client(bootstrappolicy.InfraPersistentVolumeRecyclerControllerServiceAccountName); err != nil {
+		return err
+	}
+
 	allocationController.RunSecurityAllocationController()
 
-	kubernetesControllerInitializers, err := kubeControllerConfig.GetControllerInitializers(cloudProvider)
+	kubernetesControllerInitializers, err := kubeControllerConfig.GetControllerInitializers()
 	if err != nil {
 		return err
 	}

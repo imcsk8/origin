@@ -46,7 +46,6 @@ var rolesToHide = sets.NewString(
 	"system:node-proxier",
 	"system:node-reader",
 	"system:oauth-token-deleter",
-	"system:openshift:template-service-broker",
 	"system:openshift:templateservicebroker-client",
 	"system:persistent-volume-provisioner",
 	"system:registry",
@@ -62,9 +61,12 @@ func TestSystemOnlyRoles(t *testing.T) {
 
 	for _, role := range GetBootstrapClusterRoles() {
 		if isControllerRole(&role) {
-			continue // assume all controller roles can be ignored
+			if !isSystemOnlyRole(&role) {
+				t.Errorf("Controller role %q is missing the system only annotation", role.Name)
+			}
+			continue // assume all controller roles can be ignored even though we require the annotation
 		}
-		if isSystemOnlyRole(role) {
+		if isSystemOnlyRole(&role) {
 			hide.Insert(role.Name)
 		} else {
 			show.Insert(role.Name)
@@ -72,21 +74,17 @@ func TestSystemOnlyRoles(t *testing.T) {
 	}
 
 	if !show.Equal(rolesToShow) || !hide.Equal(rolesToHide) {
-		shouldNotShow := show.Difference(rolesToShow).List()
-		shouldNotHide := hide.Difference(rolesToHide).List()
 		t.Error("The list of expected end user roles has been changed.  Please discuss with the web console team to update role annotations.")
-		if len(shouldNotShow) > 0 {
-			t.Errorf("These roles are visible but not in rolesToShow: %v", shouldNotShow)
-		}
-		if len(shouldNotHide) > 0 {
-			t.Errorf("These roles are hidden but not in rolesToHide: %v", shouldNotHide)
-		}
+		t.Logf("These roles are visible but not in rolesToShow: %v", show.Difference(rolesToShow).List())
+		t.Logf("These roles are hidden but not in rolesToHide: %v", hide.Difference(rolesToHide).List())
+		t.Logf("These roles are in rolesToShow but are missing from the visible list: %v", rolesToShow.Difference(show).List())
+		t.Logf("These roles are in rolesToHide but are missing from the hidden list: %v", rolesToHide.Difference(hide).List())
 	}
 }
 
 // this logic must stay in sync w/the web console for this test to be valid/valuable
 // it is the same logic that is run on the membership page
-func isSystemOnlyRole(role authorizationapi.ClusterRole) bool {
+func isSystemOnlyRole(role *authorizationapi.ClusterRole) bool {
 	return role.Annotations[roleSystemOnly] == roleIsSystemOnly
 }
 

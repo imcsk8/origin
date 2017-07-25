@@ -237,6 +237,7 @@ func NewCmdNewApplication(name, baseName string, f *clientcmd.Factory, in io.Rea
 	cmd.Flags().StringVar(&config.Name, "name", "", "Set name to use for generated application artifacts")
 	cmd.Flags().Var(&config.Strategy, "strategy", "Specify the build strategy to use if you don't want to detect (docker|pipeline|source).")
 	cmd.Flags().StringP("labels", "l", "", "Label to set in all resources for this application.")
+	cmd.Flags().BoolVar(&config.IgnoreUnknownParameters, "ignore-unknown-parameters", false, "If true, will not stop processing if a provided parameter does not exist in the template.")
 	cmd.Flags().BoolVar(&config.InsecureRegistry, "insecure-registry", false, "If true, indicates that the referenced Docker images are on insecure registries and should bypass certificate checking")
 	cmd.Flags().BoolVarP(&config.AsList, "list", "L", false, "List all local templates and image streams that can be used to create.")
 	cmd.Flags().BoolVarP(&config.AsSearch, "search", "S", false, "Search all templates, image streams, and Docker images that match the arguments provided.")
@@ -245,7 +246,7 @@ func NewCmdNewApplication(name, baseName string, f *clientcmd.Factory, in io.Rea
 	cmd.Flags().BoolVar(&config.AllowSecretUse, "grant-install-rights", false, "If true, a component that requires access to your account may use your token to install software into your project. Only grant images you trust the right to run with your token.")
 	cmd.Flags().BoolVar(&config.SkipGeneration, "no-install", false, "Do not attempt to run images that describe themselves as being installable")
 
-	o.Action.BindForOutput(cmd.Flags())
+	o.Action.BindForOutput(cmd.Flags(), "template")
 	cmd.Flags().String("output-version", "", "The preferred API versions of the output objects")
 
 	return cmd
@@ -375,7 +376,7 @@ func (o *NewAppOptions) RunNewApp() error {
 	return nil
 }
 
-type LogsForObjectFunc func(object, options runtime.Object) (*restclient.Request, error)
+type LogsForObjectFunc func(object, options runtime.Object, timeout time.Duration) (*restclient.Request, error)
 
 func followInstallation(config *newcmd.AppConfig, input string, pod *kapi.Pod, logsForObjectFn LogsForObjectFunc) error {
 	fmt.Fprintf(config.Out, "--> Installing ...\n")
@@ -396,7 +397,6 @@ func followInstallation(config *newcmd.AppConfig, input string, pod *kapi.Pod, l
 		},
 		Mapper:        config.Mapper,
 		Typer:         config.Typer,
-		ClientMapper:  config.ClientMapper,
 		LogsForObject: logsForObjectFn,
 		Out:           config.Out,
 	}
@@ -502,6 +502,9 @@ func CompleteAppConfig(config *newcmd.AppConfig, f *clientcmd.Factory, c *cobra.
 	}
 	if config.ClientMapper == nil {
 		config.ClientMapper = resource.ClientMapperFunc(f.ClientForMapping)
+	}
+	if config.CategoryExpander == nil {
+		config.CategoryExpander = f.CategoryExpander()
 	}
 
 	namespace, _, err := f.DefaultNamespace()

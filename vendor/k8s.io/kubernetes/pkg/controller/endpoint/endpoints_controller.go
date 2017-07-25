@@ -30,24 +30,21 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/v1"
 	"k8s.io/kubernetes/pkg/api/v1/endpoints"
 	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
-	utilpod "k8s.io/kubernetes/pkg/api/v1/pod"
 	"k8s.io/kubernetes/pkg/client/clientset_generated/clientset"
 	coreinformers "k8s.io/kubernetes/pkg/client/informers/informers_generated/externalversions/core/v1"
+	"k8s.io/kubernetes/pkg/client/leaderelection/resourcelock"
 	corelisters "k8s.io/kubernetes/pkg/client/listers/core/v1"
+	"k8s.io/kubernetes/pkg/controller"
 	"k8s.io/kubernetes/pkg/util/metrics"
 
 	"github.com/golang/glog"
 )
 
 const (
-	// We'll attempt to recompute EVERY service's endpoints at least this
-	// often. Higher numbers = lower CPU/network load; lower numbers =
-	// shorter amount of time before a mistaken endpoint is corrected.
-	FullServiceResyncPeriod = 30 * time.Second
-
 	// An annotation on the Service denoting if the endpoints controller should
 	// go ahead and create endpoints for unready pods. This annotation is
 	// currently only used by StatefulSets, where we need the pod to be DNS
@@ -66,26 +63,24 @@ var (
 )
 
 // NewEndpointController returns a new *EndpointController.
-func NewEndpointController(podInformer coreinformers.PodInformer, serviceInformer coreinformers.ServiceInformer, client clientset.Interface) *EndpointController {
+func NewEndpointController(podInformer coreinformers.PodInformer, serviceInformer coreinformers.ServiceInformer,
+	endpointsInformer coreinformers.EndpointsInformer, client clientset.Interface) *EndpointController {
 	if client != nil && client.Core().RESTClient().GetRateLimiter() != nil {
 		metrics.RegisterMetricAndTrackRateLimiterUsage("endpoint_controller", client.Core().RESTClient().GetRateLimiter())
 	}
 	e := &EndpointController{
-		client: client,
-		queue:  workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "endpoint"),
+		client:           client,
+		queue:            workqueue.NewNamedRateLimitingQueue(workqueue.DefaultControllerRateLimiter(), "endpoint"),
+		workerLoopPeriod: time.Second,
 	}
 
-	serviceInformer.Informer().AddEventHandlerWithResyncPeriod(
-		cache.ResourceEventHandlerFuncs{
-			AddFunc: e.enqueueService,
-			UpdateFunc: func(old, cur interface{}) {
-				e.enqueueService(cur)
-			},
-			DeleteFunc: e.enqueueService,
+	serviceInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: e.enqueueService,
+		UpdateFunc: func(old, cur interface{}) {
+			e.enqueueService(cur)
 		},
-		// TODO: Can we have much longer period here?
-		FullServiceResyncPeriod,
-	)
+		DeleteFunc: e.enqueueService,
+	})
 	e.serviceLister = serviceInformer.Lister()
 	e.servicesSynced = serviceInformer.Informer().HasSynced
 
@@ -96,6 +91,9 @@ func NewEndpointController(podInformer coreinformers.PodInformer, serviceInforme
 	})
 	e.podLister = podInformer.Lister()
 	e.podsSynced = podInformer.Informer().HasSynced
+
+	e.endpointsLister = endpointsInformer.Lister()
+	e.endpointsSynced = endpointsInformer.Informer().HasSynced
 
 	return e
 }
@@ -118,12 +116,22 @@ type EndpointController struct {
 	// Added as a member to the struct to allow injection for testing.
 	podsSynced cache.InformerSynced
 
+	// endpointsLister is able to list/get endpoints and is populated by the shared informer passed to
+	// NewEndpointController.
+	endpointsLister corelisters.EndpointsLister
+	// endpointsSynced returns true if the endpoints shared informer has been synced at least once.
+	// Added as a member to the struct to allow injection for testing.
+	endpointsSynced cache.InformerSynced
+
 	// Services that need to be updated. A channel is inappropriate here,
 	// because it allows services with lots of pods to be serviced much
 	// more often than services with few pods; it also would cause a
 	// service that's inserted multiple times to be processed more than
 	// necessary.
 	queue workqueue.RateLimitingInterface
+
+	// workerLoopPeriod is the time between worker runs. The workers process the queue of service and pod changes.
+	workerLoopPeriod time.Duration
 }
 
 // Runs e; will not return until stopCh is closed. workers determines how many
@@ -132,17 +140,19 @@ func (e *EndpointController) Run(workers int, stopCh <-chan struct{}) {
 	defer utilruntime.HandleCrash()
 	defer e.queue.ShutDown()
 
-	if !cache.WaitForCacheSync(stopCh, e.podsSynced, e.servicesSynced) {
-		utilruntime.HandleError(fmt.Errorf("timed out waiting for caches to sync"))
+	glog.Infof("Starting endpoint controller")
+	defer glog.Infof("Shutting down endpoint controller")
+
+	if !controller.WaitForCacheSync("endpoint", stopCh, e.podsSynced, e.servicesSynced, e.endpointsSynced) {
 		return
 	}
 
 	for i := 0; i < workers; i++ {
-		go wait.Until(e.worker, time.Second, stopCh)
+		go wait.Until(e.worker, e.workerLoopPeriod, stopCh)
 	}
+
 	go func() {
 		defer utilruntime.HandleCrash()
-		time.Sleep(5 * time.Minute) // give time for our cache to fill
 		e.checkLeftoverEndpoints()
 	}()
 
@@ -214,28 +224,8 @@ func (e *EndpointController) updatePod(old, cur interface{}) {
 }
 
 func hostNameAndDomainAreEqual(pod1, pod2 *v1.Pod) bool {
-	return getHostname(pod1) == getHostname(pod2) &&
-		getSubdomain(pod1) == getSubdomain(pod2)
-}
-
-func getHostname(pod *v1.Pod) string {
-	if len(pod.Spec.Hostname) > 0 {
-		return pod.Spec.Hostname
-	}
-	if pod.Annotations != nil {
-		return pod.Annotations[utilpod.PodHostnameAnnotation]
-	}
-	return ""
-}
-
-func getSubdomain(pod *v1.Pod) string {
-	if len(pod.Spec.Subdomain) > 0 {
-		return pod.Spec.Subdomain
-	}
-	if pod.Annotations != nil {
-		return pod.Annotations[utilpod.PodSubdomainAnnotation]
-	}
-	return ""
+	return pod1.Spec.Hostname == pod2.Spec.Hostname &&
+		pod1.Spec.Subdomain == pod2.Spec.Subdomain
 }
 
 // When a pod is deleted, enqueue the services the pod used to be a member of.
@@ -248,14 +238,19 @@ func (e *EndpointController) deletePod(obj interface{}) {
 		e.addPod(obj)
 		return
 	}
-	podKey, err := keyFunc(obj)
-	if err != nil {
-		utilruntime.HandleError(fmt.Errorf("Couldn't get key for object %#v: %v", obj, err))
+	// If we reached here it means the pod was deleted but its final state is unrecorded.
+	tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("Couldn't get object from tombstone %#v", obj))
 		return
 	}
-	glog.V(4).Infof("Pod %q was deleted but we don't have a record of its final state, so it will take up to %v before it will be removed from all endpoint records.", podKey, FullServiceResyncPeriod)
-
-	// TODO: keep a map of pods to services to handle this condition.
+	pod, ok := tombstone.Obj.(*v1.Pod)
+	if !ok {
+		utilruntime.HandleError(fmt.Errorf("Tombstone contained object that is not a Pod: %#v", obj))
+		return
+	}
+	glog.V(4).Infof("Enqueuing services of deleted pod %s having final state unrecorded", pod.Name)
+	e.addPod(pod)
 }
 
 // obj could be an *v1.Service, or a DeletionFinalStateUnknown marker item.
@@ -390,14 +385,14 @@ func (e *EndpointController) syncService(key string) error {
 					ResourceVersion: pod.ObjectMeta.ResourceVersion,
 				}}
 
-			hostname := getHostname(pod)
+			hostname := pod.Spec.Hostname
 			if len(hostname) > 0 &&
-				getSubdomain(pod) == service.Name &&
+				pod.Spec.Subdomain == service.Name &&
 				service.Namespace == pod.Namespace {
 				epa.Hostname = hostname
 			}
 
-			if tolerateUnreadyEndpoints || v1.IsPodReady(pod) {
+			if tolerateUnreadyEndpoints || podutil.IsPodReady(pod) {
 				subsets = append(subsets, v1.EndpointSubset{
 					Addresses: []v1.EndpointAddress{epa},
 					Ports:     []v1.EndpointPort{epp},
@@ -416,7 +411,7 @@ func (e *EndpointController) syncService(key string) error {
 	subsets = endpoints.RepackSubsets(subsets)
 
 	// See if there's actually an update here.
-	currentEndpoints, err := e.client.Core().Endpoints(service.Namespace).Get(service.Name, metav1.GetOptions{})
+	currentEndpoints, err := e.endpointsLister.Endpoints(service.Namespace).Get(service.Name)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			currentEndpoints = &v1.Endpoints{
@@ -435,7 +430,11 @@ func (e *EndpointController) syncService(key string) error {
 		glog.V(5).Infof("endpoints are equal for %s/%s, skipping update", service.Namespace, service.Name)
 		return nil
 	}
-	newEndpoints := currentEndpoints
+	copy, err := api.Scheme.DeepCopy(currentEndpoints)
+	if err != nil {
+		return err
+	}
+	newEndpoints := copy.(*v1.Endpoints)
 	newEndpoints.Subsets = subsets
 	newEndpoints.Labels = service.Labels
 	if newEndpoints.Annotations == nil {
@@ -471,13 +470,20 @@ func (e *EndpointController) syncService(key string) error {
 // some stragglers could have been left behind if the endpoint controller
 // reboots).
 func (e *EndpointController) checkLeftoverEndpoints() {
-	list, err := e.client.Core().Endpoints(metav1.NamespaceAll).List(metav1.ListOptions{})
+	list, err := e.endpointsLister.List(labels.Everything())
 	if err != nil {
 		utilruntime.HandleError(fmt.Errorf("Unable to list endpoints (%v); orphaned endpoints will not be cleaned up. (They're pretty harmless, but you can restart this component if you want another attempt made.)", err))
 		return
 	}
-	for i := range list.Items {
-		ep := &list.Items[i]
+	for _, ep := range list {
+		if _, ok := ep.Annotations[resourcelock.LeaderElectionRecordAnnotationKey]; ok {
+			// when there are multiple controller-manager instances,
+			// we observe that it will delete leader-election endpoints after 5min
+			// and cause re-election
+			// so skip the delete here
+			// as leader-election only have endpoints without service
+			continue
+		}
 		key, err := keyFunc(ep)
 		if err != nil {
 			utilruntime.HandleError(fmt.Errorf("Unable to get key for endpoint %#v", ep))
