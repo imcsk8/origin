@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Template
+metadata:
+  name: router-metrics-template
+  annotations:
+    description: "Description"
+    iconClass: "icon-shadowman"
+    tags: "router"
+objects:
+- apiVersion: v1
+  kind: Pod
+  metadata:
+    name: router-metrics
+  spec:
+    containers:
+    - image: openshift/openshift-router-monitor
+      name: router-metrics
+      ports:
+      - containerPort: 8000
+        protocol: TCP
+labels:
+  app: router-metrics
