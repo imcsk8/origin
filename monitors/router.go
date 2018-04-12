@@ -20,25 +20,36 @@ var (
 
 func main() {
 	var requests int
+	var host string
 	prometheus.MustRegister(requestDuration)
-	hostflag := flag.String("host", "localhost:8000", "Route to connect")
+
+	env_service_port := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_PORT")
+	env_service_host := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_HOST")
+
+	flag.StringVar(&host, "host", "localhost:8000", "Route to connect")
+	flag.StringVar(&host, "h", "localhost:8000", "Route to connect")
 	flag.IntVar(&requests, "requests", 10, "Number of requests to perform")
 	flag.IntVar(&requests, "r", 10, "Number of requests to perform")
 	flag.Parse()
-	fmt.Printf("Testing connection trhough %s\n", *hostflag)
+
+	// Use environment instead of arguments
+	if env_service_port != "" && env_service_host != "" {
+		host = env_service_host + ":" + env_service_port
+	}
+
+	fmt.Printf("Testing connection trhough %s\n", host)
 	http.HandleFunc("/", handler)
 	http.Handle("/metrics", promhttp.Handler())
 
 	go http.ListenAndServe("localhost:8000", nil)
 	for i := 0; i <= requests; i++ {
-		if request("http://" + *hostflag) {
+		if request("http://" + host) {
 			fmt.Printf("(%d) Successful request\n", i)
 		} else {
 			fmt.Printf("(%d) Error in request\n", i)
 		}
 	}
-	request("http://" + *hostflag + "/metrics")
-
+	request("http://" + host + "/metrics")
 }
 
 // Response handler

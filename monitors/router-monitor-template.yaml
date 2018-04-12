@@ -1,14 +1,13 @@
-apiVersion: v1
-kind: Template
+Version: v1
 metadata:
   name: router-metrics-template
   annotations:
-    description: "Description"
+    description: "Template for creating router metrics"
     iconClass: "icon-shadowman"
     tags: "router"
 objects:
-- apiVersion: v1
-  kind: Pod
+- kind: Pod
+  apiVersion: v1
   metadata:
     name: router-metrics
   spec:
@@ -18,5 +17,19 @@ objects:
       ports:
       - containerPort: 8000
         protocol: TCP
+- kind: "Service"
+  apiVersion: v1
+  metadata:
+    name: "router-metrics-service"
+  annotations:
+    description: "Exposes the router metrics pod"
+  spec:
+    ports:
+      - name: "router-metrics-service"
+        port: 8000
+        targetPort: 8000
+    selector:
+      app: "router-metrics"
 labels:
   app: router-metrics
+
