@@ -1,7 +1,6 @@
 package main
 
 import (
-	"flag"
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -9,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 )
 
 var (
@@ -20,36 +21,62 @@ var (
 
 func main() {
 	var requests int
-	var host string
+
 	prometheus.MustRegister(requestDuration)
 
-	env_service_port := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_PORT")
-	env_service_host := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_HOST")
+	port := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_PORT")
+	host := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_HOST")
+	reqs := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_REQUESTS")
+	interval := os.Getenv("ROUTER_METRICS_SERVICE_SERVICE_REQUESTS_INTERVAL")
 
-	flag.StringVar(&host, "host", "localhost:8000", "Route to connect")
-	flag.StringVar(&host, "h", "localhost:8000", "Route to connect")
-	flag.IntVar(&requests, "requests", 10, "Number of requests to perform")
-	flag.IntVar(&requests, "r", 10, "Number of requests to perform")
-	flag.Parse()
+	if port == "" {
+		port = "8000"
+	}
+
+	if host == "" {
+		host = "localhost"
+	}
+
+	if reqs == "" {
+		reqs = "10"
+	}
+
+	if interval == "" {
+		interval = "5"
+	}
+
+	requests, _ = strconv.Atoi(reqs)
+	requestInterval, _ := strconv.Atoi(interval)
 
 	// Use environment instead of arguments
-	if env_service_port != "" && env_service_host != "" {
-		host = env_service_host + ":" + env_service_port
+	if port != "" && host != "" {
+		host = host + ":" + port
 	}
 
 	fmt.Printf("Testing connection trhough %s\n", host)
 	http.HandleFunc("/", handler)
 	http.Handle("/metrics", promhttp.Handler())
 
-	go http.ListenAndServe("localhost:8000", nil)
-	for i := 0; i <= requests; i++ {
-		if request("http://" + host) {
+	// Request ticker
+	ticker := time.NewTicker(time.Duration(requestInterval) * time.Second)
+	go func() {
+		for range ticker.C {
+			handleRequests(requests, host)
+		}
+	}()
+
+	http.ListenAndServe("localhost:8000", nil)
+}
+
+func handleRequests(reqs int, host string) {
+	hostname := "http://" + host
+	for i := 0; i <= reqs; i++ {
+		if request(hostname) {
 			fmt.Printf("(%d) Successful request\n", i)
 		} else {
 			fmt.Printf("(%d) Error in request\n", i)
 		}
 	}
-	request("http://" + host + "/metrics")
 }
 
 // Response handler
@@ -58,7 +85,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	log.Println("Test URL /")
 }
 
-// Request
+// Perform Request
 func request(host string) bool {
 	timer := prometheus.NewTimer(prometheus.ObserverFunc(requestDuration.Set))
 	defer timer.ObserveDuration()
