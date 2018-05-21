@@ -48,6 +48,8 @@ func main() {
 	requests, _ = strconv.Atoi(reqs)
 	requestInterval, _ := strconv.Atoi(interval)
 
+	fmt.Printf("Starting server on: %d:%d\nRequests: %s\nInterval: %s\n", host, port, reqs, interval)
+
 	// Use environment instead of arguments
 	if port != "" && host != "" {
 		host = host + ":" + port
@@ -59,13 +61,14 @@ func main() {
 
 	// Request ticker
 	ticker := time.NewTicker(time.Duration(requestInterval) * time.Second)
+	defer ticker.Stop()
 	go func() {
 		for range ticker.C {
 			handleRequests(requests, host)
 		}
 	}()
 
-	http.ListenAndServe("localhost:8000", nil)
+	http.ListenAndServe(host, nil)
 }
 
 func handleRequests(reqs int, host string) {
