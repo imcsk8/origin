@@ -18,6 +18,15 @@ objects:
       ports:
       - containerPort: 8000
         protocol: TCP
+      env:
+      - name: ROUTER_METRICS_SERVICE_SERVICE_PORT
+        value: ${ROUTER_METRICS_SERVICE_SERVICE_PORT}
+      - name: ROUTER_METRICS_SERVICE_SERVICE_HOST
+        value: ${ROUTER_METRICS_SERVICE_SERVICE_HOST}
+      - name: ROUTER_METRICS_SERVICE_SERVICE_REQUESTS
+        value: ${ROUTER_METRICS_SERVICE_SERVICE_REQUESTS}
+      - name: ROUTER_METRICS_SERVICE_SERVICE_REQUESTS_INTERVAL
+        value: ${ROUTER_METRICS_SERVICE_SERVICE_REQUESTS_INTERVAL}
 - kind: "Service"
   apiVersion: v1
   metadata:
@@ -31,6 +40,19 @@ objects:
         targetPort: 8000
     selector:
       app: "router-metrics"
+parameters:
+- name: ROUTER_METRICS_SERVICE_SERVICE_PORT
+  description: Service port for the HTTP router metrics.
+  value: "8000"
+- name: ROUTER_METRICS_SERVICE_SERVICE_HOST
+  description: Host for the HTTP router metrics.
+  value: "0.0.0.0"
+- name: ROUTER_METRICS_SERVICE_SERVICE_REQUESTS
+  description: Requests to perform to the service.
+  value: "10"
+- name: ROUTER_METRICS_SERVICE_SERVICE_REQUESTS_INTERVAL
+  description: Time in seconds to wait between each request set.
+  value: "120"
 labels:
   app: router-metrics
 
