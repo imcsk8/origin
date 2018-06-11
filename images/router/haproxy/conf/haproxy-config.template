@@ -33,6 +33,9 @@
 
 global
   maxconn {{env "ROUTER_MAX_CONNECTIONS" "20000"}}
+  {{- if isTrue (env "ROUTER_ENABLE_NBTRHEADS") }}
+    nbthreads {{env "ROUTER_THREADS" "4"}}
+  {{-  end }}
 
   daemon
 {{- with (env "ROUTER_SYSLOG_ADDRESS") }}

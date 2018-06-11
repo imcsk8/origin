@@ -85,6 +85,8 @@ type TemplateRouter struct {
 	Ciphers                  string
 	StrictSNI                bool
 	MetricsType              string
+	EnableThreads            bool
+	Threads                  string
 }
 
 // isTrue here has the same logic as the function within package pkg/router/template
@@ -119,6 +121,8 @@ func (o *TemplateRouter) Bind(flag *pflag.FlagSet) {
 	flag.StringVar(&o.Ciphers, "ciphers", util.Env("ROUTER_CIPHERS", ""), "Specifies the cipher suites to use. You can choose a predefined cipher set ('modern', 'intermediate', or 'old') or specify exact cipher suites by passing a : separated list.")
 	flag.BoolVar(&o.StrictSNI, "strict-sni", isTrue(util.Env("ROUTER_STRICT_SNI", "")), "Use strict-sni bind processing (do not use default cert).")
 	flag.StringVar(&o.MetricsType, "metrics-type", util.Env("ROUTER_METRICS_TYPE", ""), "Specifies the type of metrics to gather. Supports 'haproxy'.")
+	flag.BoolVar(&o.EnableThreads, "enable-threads", util.Env("ROUTER_ENABLE_TRHEADS", "false") == "true", "Enable the use of threads for the router.")
+	flag.StringVar(&o.Threads, "threads", util.Env("ROUTER_THREADS", "4"), "Specifies the amount of threads for the router.")
 }
 
 type RouterStats struct {
