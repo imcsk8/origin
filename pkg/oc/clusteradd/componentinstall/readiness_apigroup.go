@@ -16,7 +16,8 @@ import (
 
 func WaitForAPIs(aggregatorClient aggregatorclient.Interface, names ...string) error {
 	// wait until the openshift apiservices are ready
-	return wait.PollImmediate(time.Second, 5*time.Minute, func() (bool, error) {
+	//return wait.PollImmediate(time.Second, 5*time.Minute, func() (bool, error) {
+	return wait.PollImmediate(time.Second, 15*time.Minute, func() (bool, error) {
 		return CheckForAPIs(aggregatorClient, names...)
 	})
 }
